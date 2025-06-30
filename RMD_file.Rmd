@@ -1,0 +1,612 @@
+---
+title: "group_project"
+output: word_document
+date: "2025-06-11"
+---
+
+
+  
+  ```
+```{r}
+
+# Install required packages
+
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+
+data <- read.csv("C:/Users/ERC/Downloads/assignment/patients.csv")
+str(data)
+summary(data)
+
+cols_to_check <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+data[cols_to_check] <- lapply(data[cols_to_check], function(x) ifelse(x == 0, NA, x))
+
+colSums(is.na(data))
+
+
+#Calculate and interpret basic statistics (mean, median, SD, quartiles) for each variable.
+basic_stats <- data.frame(
+  Mean   = sapply(data, mean, na.rm = TRUE),
+  Median = sapply(data, median, na.rm = TRUE),
+  SD     = sapply(data, sd, na.rm = TRUE),
+  Q1     = sapply(data, function(x) quantile(x, 0.25, na.rm = TRUE)),
+  Q3     = sapply(data, function(x) quantile(x, 0.75, na.rm = TRUE))
+)  # ← Close data.frame parenthesis here
+
+print(basic_stats)  
+
+
+#Based on the summmary dataset presents several notable data issues that literature consistently highlights as important to address before analysis. First, biologically implausible zero values appear frequently in key clinical variables specifically, SkinThickness and Insulin as well as smaller but nontrivial percentages of Glucose, BloodPressure, and BMI. These are not physiological plausible to be zero.Overall the dataset’s core statistical measures—means, medians, quartiles—are all biased by the zero-coded missing values and pronounced skewness/outliers. Literature strongly recommends preprocessing steps including median or mean-based imputation or normalization to manage skewed distributions, and outlier-handling via capping or robust scaling .  
+
+
+```
+
+``` {r}
+ggplot(data, aes(x = factor(Diagnosis), y = BMI)) +
+  geom_boxplot(fill = "orange", color = "black") +
+  labs(title = "Boxplot: BMI by Diagnosis",
+       x = "Diagnosis (0 = No GDM, 1 = GDM)",
+       y = "BMI") +
+  theme_minimal()
+
+# Analysis of the plot showsthat women diagnosed with GDM  tend to have higher BMI values—both in median and upper range—compared to those without GDM (coded 0), indicating that the GDM group not only has a higher typical BMI, but also greater variability and more extreme BMI outliers. This visual finding aligns with clinical evidence showing that elevated early-pregnancy or pre-pregnancy BMI is a strong independent predictor of GDM. 
+#Violin Plot: Glucose by Diagnosis
+
+ggplot(data, aes(x = factor(Diagnosis), y = Glucose)) +
+  geom_violin(fill = "skyblue") +
+  geom_boxplot(width = 0.1, fill = "white") +
+  labs(title = "Violin Plot: Glucose by Diagnosis",
+       x = "Diagnosis (0 = No GDM, 1 = GDM)",
+       y = "Glucose") +
+  theme_minimal()
+
+
+
+#Analysis of the violin plot explains the comparision of glucose levels without GDM (0) and with GDM (1), combining density distribution and boxplot elements into a single visual. The GDM group shows a notably wider and taller “violin,” especially above ~130 mg/dL, indicating a higher density of elevated glucose readings and several extreme values, while also having a higher median and wider interquartile range.In contrast, the non-GDM group’s violin is narrower and more concentrated around lower glucose values (~80–110 mg/dL), with fewer high outliers. Essentially, this plot reveals that not only do women with GDM tend to have higher typical glucose levels, but their glucose readings are more variable and skewed toward elevated values.
+
+
+ggplot(data, aes(x = Age, y = BMI, color = factor(Diagnosis))) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatter Plot: Age vs BMI by Diagnosis",
+       x = "Age",
+       y = "BMI",
+       color = "Diagnosis") +
+  theme_minimal()
+  
+#The scatterplot illustrates how age and BMI jointly relate to GDM diagnosis, with red points (no GDM) and blue points (GDM). It reveals that GDM is more common in older individuals, especially those aged 40 and above, and among women with higher BMI,
+
+# 3. Scatter plot: Glucose vs Insulin (log scale to reduce skew)
+ggplot(data, aes(x = Glucose, y = Insulin)) +
+  geom_point(alpha = 0.6) +
+  scale_y_log10() +
+  labs(title = "Glucose vs. Insulin (log scale)", x = "Glucose", y = "Insulin (log)")
+#Analysis of the scatter plot  glucose vs. insulin (on a logarithmic scale) shows a clear positive relationship—with higher blood glucose levels generally associated with higher insulin levels—supporting the notion of insulin resistance: as glucose rises, the pancreas ramps up insulin production as descibed in the literature reviews. However, the relationship is not perfectly linear there's considerable vertical spread at higher glucose valuesindicating variability in individual insulin responses . 
+
+#Bar Plot: Average Pregnancies by Diagnosis
+
+library(dplyr)
+
+# Calculate average pregnancies by diagnosis
+avg_preg <- data %>%
+  group_by(Diagnosis) %>%
+  summarise(avg_pregnancies = mean(Pregnancies, na.rm = TRUE))
+
+# Bar plot
+ggplot(avg_preg, aes(x = factor(Diagnosis), y = avg_pregnancies)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(title = "Average Pregnancies by Diagnosis",
+       x = "Diagnosis (0 = No GDM, 1 = GDM)",
+       y = "Average Number of Pregnancies") +
+  theme_minimal()
+# Analysis of this plot shows that the average pregnancies by Diagnosis. It explains on woman with negative diagnosis and positive diagnosis when they are in pregnancy.
+
+ggplot(patients, aes(x = factor(Diagnosis))) + 
+  geom_bar(fill = "purple") + 
+  labs(title = "Class Distribution of Diagnosis", 
+       x = "Diagnosis (0 = No, 1 = Yes)", 
+       y = "Count") + 
+  theme_minimal() 
+
+#Slight class imbalance exists. Positive class is approximately 35% of the overall dataset. This could potentially mean that we have to use oversampling or undersampling techniques for models that are susceptible to class imbalance
+```
+
+
+```{r}
+
+# Impute missing values 
+
+data[cols_to_check] <- lapply(data[cols_to_check], function(x) {
+  x[is.na(x)] <- median(x, na.rm = TRUE)
+  return(x)
+})
+colSums(is.na(data[cols_to_check]))
+
+summary(data)
+
+#Imputation is performed to address missing values. Median impuatation is implemented to solve the missing values.
+
+```
+
+```{r}
+# Function to detect outliers using IQR
+detect_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
+  return(which(x < lower | x > upper))
+}
+
+# Variables to check
+cols_to_check <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+
+# Count of outliers per variable
+sapply(data[cols_to_check], function(x) length(detect_outliers(x)))
+
+#Capping outliers
+cap_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
+  x[x < lower] <- lower
+  x[x > upper] <- upper
+  return(x)
+}
+
+data[cols_to_check] <- lapply(data[cols_to_check], cap_outliers)
+
+#The technique of capping is performed to outliers without discarding datapoints. Instead of removing extreme values, you set upper and lower bounds  and replace all values outside those bounds with the boundary values themselves. This method is slected because we wanted to manage outliers while preserving every data point and maintaining sample integrity.This method reduces the undue influence of outliers on summary statistics like the mean and variance, resulting in more robust model estimates.
+
+
+```
+```{r}
+#Correlation matrix
+library(corrplot)
+
+# Select numeric predictors only (excluding Diagnosis)
+numeric_vars <- data[, sapply(data, is.numeric)]
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Visualize
+corrplot(cor_matrix, method = "color", type = "lower", tl.col = "black")
+
+
+```
+
+
+```{r}
+
+### Logistic Regression Training using the cleaned `data` from previous code
+
+# Ensure required packages are installed and loaded
+if (!require(caret)) install.packages("caret")
+if (!require(e1071)) install.packages("e1071")
+library(caret)
+library(e1071)
+
+# Prepare the data
+data$Diagnosis <- as.factor(data$Diagnosis)
+
+# Split the data
+set.seed(123)  # For reproducibility
+trainIndex <- createDataPartition(data$Diagnosis, p = 0.8, list = FALSE)
+trainData <- data[trainIndex, ]
+testData  <- data[-trainIndex, ]
+
+# Train the logistic regression model
+model <- glm(Diagnosis ~ ., data = trainData, family = "binomial")
+summary(model)
+
+# Predictions
+pred_probs   <- predict(model, newdata = testData, type = "response")
+pred_classes <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Confusion Matrix for 0.5 threshold
+conf_matrix <- confusionMatrix(
+  factor(pred_classes, levels = c(0, 1)),
+  factor(testData$Diagnosis, levels = c(0, 1))
+)
+print(conf_matrix)
+
+# Threshold 0.4
+pred_classes_40 <- ifelse(pred_probs > 0.4, 1, 0)
+conf_matrix_40 <- confusionMatrix(
+  factor(pred_classes_40, levels = c(0, 1)),
+  factor(testData$Diagnosis, levels = c(0, 1))
+)
+print(conf_matrix_40)
+
+# Threshold 0.45
+pred_classes_45 <- ifelse(pred_probs > 0.45, 1, 0)
+conf_matrix_45 <- confusionMatrix(
+  factor(pred_classes_45, levels = c(0, 1)),
+  factor(testData$Diagnosis, levels = c(0, 1))
+)
+print(conf_matrix_45)
+
+# AUC & ROC Curve
+if (!require(pROC)) install.packages("pROC")
+library(pROC)
+roc_obj <- roc(testData$Diagnosis, pred_probs)
+plot(roc_obj, col = "blue", main = "ROC Curve - Logistic Regression")
+auc(roc_obj)
+
+# Cross-Validation
+ctrl <- trainControl(method = "cv", number = 10)
+cv_model <- train(Diagnosis ~ ., 
+                  data = data, 
+                  method = "glm", 
+                  family = "binomial", 
+                  trControl = ctrl)
+print(cv_model)
+
+
+
+
+
+
+
+############################################################################################
+# --- LASSO Feature Selection ---
+if (!require(glmnet)) install.packages("glmnet")
+library(glmnet)
+
+x <- model.matrix(Diagnosis ~ ., data = data)[, -1]
+y <- data$Diagnosis
+
+lasso_cv <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+plot(lasso_cv)
+lasso_coef <- coef(lasso_cv, s = "lambda.min")
+print(lasso_coef)
+
+# --- SVM with SMOTE and Hyperparameter Tuning ---
+if (!require(smotefamily)) install.packages("smotefamily")
+if (!require(DMwR2)) install.packages("DMwR2")
+if (!require(e1071)) install.packages("e1071")
+if (!require(caret)) install.packages("caret")
+library(smotefamily)
+library(DMwR2)
+library(e1071)
+library(caret)
+
+# Prepare for SMOTE
+data$Diagnosis <- as.factor(data$Diagnosis)
+x_smote <- data[, -which(names(data) == "Diagnosis")]
+y_smote <- data$Diagnosis
+smote_result <- SMOTE(x_smote, y_smote, K = 5, dup_size = 1)
+balanced_data <- smote_result$data
+names(balanced_data)[ncol(balanced_data)] <- "Diagnosis"
+balanced_data$Diagnosis <- as.factor(balanced_data$Diagnosis)
+
+# Split balanced data
+set.seed(123)
+index <- sample(1:nrow(balanced_data), 0.7 * nrow(balanced_data))
+train_data <- balanced_data[index, ]
+test_data  <- balanced_data[-index, ]
+
+# Tune SVM
+tune_result <- tune(svm,
+                    Diagnosis ~ .,
+                    data = train_data,
+                    kernel = "radial",
+                    ranges = list(cost = c(0.1, 1, 10, 100),
+                                  gamma = c(0.001, 0.01, 0.1, 1)))
+summary(tune_result)
+
+# Train best model
+best_model <- svm(Diagnosis ~ .,  
+                  data = train_data,  
+                  kernel = "radial",  
+                  cost = tune_result$best.parameters$cost,
+                  gamma = tune_result$best.parameters$gamma,
+                  probability = TRUE)
+
+# Predict
+svm_probs <- predict(best_model, test_data, probability = TRUE)
+probs <- attr(svm_probs, "probabilities")[, "1"]
+custom_pred <- ifelse(probs > 0.4, "1", "0")
+custom_pred <- factor(custom_pred, levels = c("0", "1"))
+
+# Evaluate
+conf_mat <- confusionMatrix(custom_pred, test_data$Diagnosis)
+print(conf_mat)
+
+# F1, F2 Scores
+precision <- conf_mat$byClass["Pos Pred Value"]
+recall <- conf_mat$byClass["Sensitivity"]
+f1 <- 2 * (precision * recall) / (precision + recall)
+f2 <- (5 * precision * recall) / ((4 * precision) + recall)
+
+cat("\n--- Additional Metrics ---\n")
+cat("Precision:", round(precision, 4), "\n")
+cat("Recall   :", round(recall, 4), "\n")
+cat("F1 Score :", round(f1, 4), "\n")
+cat("F2 Score :", round(f2, 4), "\n")
+
+# ROC Curve & AUC
+if (!require(pROC)) install.packages("pROC")
+library(pROC)
+roc_obj <- roc(test_data$Diagnosis, probs)
+plot(roc_obj, main = "ROC Curve - Tuned SVM", col = "blue", lwd = 2)
+cat("AUC:", round(auc(roc_obj), 4), "\n")
+```
+```{r}
+library(caret)
+library(randomForest)
+
+
+```
+```{r}
+
+#Random Forest
+# Load required libraries
+library(randomForest)
+library(caret)
+library(e1071)  # For confusion matrix
+library(pROC)   # For ROC curves
+
+# Ensure reproducibility
+set.seed(123)
+
+# Prepare data (assuming you've already done the preprocessing)
+# Make sure Diagnosis is a factor for classification
+data$Diagnosis <- as.factor(data$Diagnosis)
+
+# Create train-test split (80-20 split)
+train_index <- createDataPartition(data$Diagnosis, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Check class distribution in both sets
+print("Training set class distribution:")
+print(table(train_data$Diagnosis))
+print("Test set class distribution:")
+print(table(test_data$Diagnosis))
+
+# Train Random Forest model
+# Basic model
+rf_model <- randomForest(
+  Diagnosis ~ .,
+  data = train_data,
+  ntree = 500,          # Number of trees
+  mtry = sqrt(ncol(train_data) - 1),  # Number of variables at each split
+  importance = TRUE,     # Calculate variable importance
+  proximity = TRUE      # Calculate proximity matrix
+)
+
+# Print model summary
+print(rf_model)
+
+# Make predictions on test set
+test_predictions <- predict(rf_model, test_data)
+test_probabilities <- predict(rf_model, test_data, type = "prob")
+
+# Evaluate model performance
+confusion_matrix <- confusionMatrix(test_predictions, test_data$Diagnosis)
+print(confusion_matrix)
+
+# Calculate additional metrics
+accuracy <- confusion_matrix$overall['Accuracy']
+sensitivity <- confusion_matrix$byClass['Sensitivity']
+specificity <- confusion_matrix$byClass['Specificity']
+
+print(paste("Accuracy:", round(accuracy, 3)))
+print(paste("Sensitivity (Recall):", round(sensitivity, 3)))
+print(paste("Specificity:", round(specificity, 3)))
+
+# ROC Curve and AUC
+roc_curve <- roc(test_data$Diagnosis, test_probabilities[, 2])
+auc_value <- auc(roc_curve)
+print(paste("AUC:", round(auc_value, 3)))
+
+# Plot ROC curve
+plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 3), ")"))
+
+# Variable Importance
+importance_scores <- importance(rf_model)
+print("Variable Importance:")
+print(importance_scores)
+
+# Plot variable importance
+varImpPlot(rf_model, main = "Variable Importance Plot")
+
+# Alternative importance plot using ggplot2
+importance_df <- data.frame(
+  Variable = rownames(importance_scores),
+  MeanDecreaseAccuracy = importance_scores[, "MeanDecreaseAccuracy"],
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+)
+
+library(ggplot2)
+ggplot(importance_df, aes(x = reorder(Variable, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Variable Importance (Mean Decrease Accuracy)",
+       x = "Variables", y = "Mean Decrease Accuracy") +
+  theme_minimal()
+
+# Model tuning with cross-validation
+# Define parameter grid for tuning
+tune_grid <- expand.grid(
+  mtry = c(2, 3, 4, 5, 6)  # Different values for mtry
+)
+
+# Set up cross-validation
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,           # 5-fold cross-validation
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = TRUE
+)
+
+# Convert factor levels to valid names for caret
+levels(train_data$Diagnosis) <- c("No", "Yes")
+levels(test_data$Diagnosis) <- c("No", "Yes")
+
+# Train model with cross-validation
+rf_tuned <- train(
+  Diagnosis ~ .,
+  data = train_data,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = tune_grid,
+  metric = "ROC",
+  ntree = 500
+)
+
+# Print tuning results
+print(rf_tuned)
+plot(rf_tuned)
+
+# Make predictions with tuned model
+tuned_predictions <- predict(rf_tuned, test_data)
+tuned_probabilities <- predict(rf_tuned, test_data, type = "prob")
+
+# Evaluate tuned model
+tuned_confusion <- confusionMatrix(tuned_predictions, test_data$Diagnosis)
+print("Tuned Model Performance:")
+print(tuned_confusion)
+
+# Compare models
+cat("\n=== Model Comparison ===\n")
+cat("Basic RF Accuracy:", round(accuracy, 3), "\n")
+cat("Tuned RF Accuracy:", round(tuned_confusion$overall['Accuracy'], 3), "\n")
+
+# Feature selection based on importance (optional)
+# Select top features
+top_features <- head(importance_df[order(-importance_df$MeanDecreaseAccuracy), ], 5)
+print("Top 5 most important features:")
+print(top_features$Variable)
+
+# Train a model with only top features
+formula_top <- as.formula(paste("Diagnosis ~", paste(top_features$Variable, collapse = " + ")))
+rf_top_features <- randomForest(
+  formula_top,
+  data = train_data,
+  ntree = 500,
+  importance = TRUE
+)
+
+# Evaluate reduced model
+top_predictions <- predict(rf_top_features, test_data)
+top_confusion <- confusionMatrix(top_predictions, test_data$Diagnosis)
+cat("Top Features Model Accuracy:", round(top_confusion$overall['Accuracy'], 3), "\n")
+```
+
+```{r}
+
+library(pROC)
+library(caret)
+library(xgboost)
+# Feature selection based on pearson correlation of threshold 0.1
+cor_vals <- cor_matrix[, "Diagnosis"]
+# View all correlations with Diagnosis
+print(cor_vals)
+selected_features <- names(cor_vals[abs(cor_vals) > 0.1 & names(cor_vals) != "Diagnosis"])
+print(selected_features)
+
+# 6. Subset data with selected features + target
+data_selected <- data[, c(selected_features, "Diagnosis")]
+
+# Standardization - only on selected features (excluding target) Z_score normalization
+features <- data_selected[, -which(names(data_selected) == "Diagnosis")]
+features_scaled <- scale(features)
+
+# Combine scaled features with Diagnosis
+data_scaled <- as.data.frame(cbind(features_scaled, Diagnosis = data_selected$Diagnosis))
+# Separate predictors and target
+X <- as.matrix(data_scaled[, -which(names(data_scaled) == "Diagnosis")])
+y <- as.integer(data_scaled$Diagnosis) - 1
+
+
+set.seed(123)
+train_idx <- createDataPartition(y, p = 0.7, list = FALSE)
+train_X <- X[train_idx, ]
+train_y <- y[train_idx]
+test_X <- X[-train_idx, ]
+test_y <- y[-train_idx]
+
+# -------------------------------
+# 2. Define Parameters
+# -------------------------------
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  eta = 0.1,
+  max_depth = 4,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+# -------------------------------
+# 3. Cross-Validation to Find Best nrounds
+# -------------------------------
+set.seed(123)
+cv_results <- xgb.cv(
+  params = params,
+  data = train_X,
+  label = train_y,
+  nrounds = 100,
+  nfold = 10,
+  showsd = TRUE,
+  stratified = TRUE,
+  print_every_n = 10,
+  early_stopping_rounds = 10,
+  maximize = TRUE
+)
+
+best_nrounds <- cv_results$best_iteration
+cat("Best nrounds:", best_nrounds, "\n")
+
+# -------------------------------
+# 4. Train Final Model
+# -------------------------------
+final_model <- xgboost(
+  data = train_X,
+  label = train_y,
+  objective = params$objective,
+  eval_metric = params$eval_metric,
+  nrounds = best_nrounds,
+  eta = params$eta,
+  max_depth = params$max_depth,
+  subsample = params$subsample,
+  colsample_bytree = params$colsample_bytree,
+  verbose = 0
+)
+
+
+# 5. Predict on Test Set
+
+# Lowered threshold to 0.4 to improve sensitivity
+pred_probs <- predict(final_model, test_X)
+preds <- ifelse(pred_probs >= 0.4, 1, 0)
+
+
+# 6. Evaluation
+
+preds_factor <- factor(preds, levels = c(0, 1))
+test_y_factor <- factor(test_y, levels = c(0, 1))
+
+conf_matrix <- confusionMatrix(preds_factor, test_y_factor, positive = "1")
+print(conf_matrix)
+
+
+
+# Generate ROC curve
+roc_obj <- roc(test_y, pred_probs)
+
+# Plot ROC curve
+plot(roc_obj, main = "ROC Curve for XGBoost Model", col = "blue", lwd = 2)
+
+# Print AUC value
+auc_value <- auc(roc_obj)
+cat("AUC:", auc_value, "\n")
+```
+
+
